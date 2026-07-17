@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ClientEntity } from './entities/client.entity';
@@ -6,13 +6,17 @@ import { CreateClientDto } from './dtos/create-client.dto';
 
 @Injectable()
 export class ClientService {
+  private readonly logger = new Logger(ClientService.name);
+  // In-memory cache of client configurations for database fail-safety
+  private readonly configCache = new Map<string, ClientEntity>();
+
   constructor(
     @InjectRepository(ClientEntity)
     private readonly clientRepository: Repository<ClientEntity>,
   ) {}
 
   /**
-   * Creates or updates a client configuration in the database.
+   * Creates or updates a client configuration in the database and caches it.
    */
   async createOrUpdate(dto: CreateClientDto): Promise<ClientEntity> {
     const client = this.clientRepository.create({
@@ -24,20 +28,46 @@ export class ClientService {
       algorithm: dto.algorithm ?? 'TOKEN_BUCKET',
       enabled: dto.enabled ?? true,
     });
-    return this.clientRepository.save(client);
+    const saved = await this.clientRepository.save(client);
+    this.configCache.set(saved.id, saved);
+    return saved;
   }
 
   /**
-   * Finds a client by ID.
+   * Finds a client by ID, falling back to local memory if database is down.
    */
   async findById(id: string): Promise<ClientEntity | null> {
-    return this.clientRepository.findOneBy({ id });
+    try {
+      const client = await this.clientRepository.findOneBy({ id });
+      if (client) {
+        this.configCache.set(id, client);
+      }
+      return client;
+    } catch (err) {
+      this.logger.warn(
+        `Database is temporarily unavailable when querying client '${id}'. Falling back to local cache.`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      return this.configCache.get(id) || null;
+    }
   }
 
   /**
-   * Lists all clients.
+   * Lists all clients, falling back to local memory if database is down.
    */
   async findAll(): Promise<ClientEntity[]> {
-    return this.clientRepository.find();
+    try {
+      const clients = await this.clientRepository.find();
+      for (const client of clients) {
+        this.configCache.set(client.id, client);
+      }
+      return clients;
+    } catch (err) {
+      this.logger.warn(
+        'Database is temporarily unavailable when listing all clients. Falling back to local cache.',
+        err instanceof Error ? err.stack : String(err),
+      );
+      return Array.from(this.configCache.values());
+    }
   }
 }

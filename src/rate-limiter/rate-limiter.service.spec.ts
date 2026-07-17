@@ -8,6 +8,7 @@ import { NotFoundException } from '@nestjs/common';
 // Hermetic in-memory mock of Redis client and the custom Lua command
 class MockRedisClient {
   private store = new Map<string, { tokens: string; last_refill: string }>();
+  public shouldThrow = false;
 
   defineCommand(name: string, options: any) {
     // Command is registered, we mock the execution in checkTokenBucket
@@ -20,6 +21,10 @@ class MockRedisClient {
     nowStr: string,
     requestedStr: string,
   ): Promise<[number, number]> {
+    if (this.shouldThrow) {
+      throw new Error('Redis connection lost');
+    }
+
     const capacity = parseFloat(capacityStr);
     const refill_rate = parseFloat(refillRateStr);
     const now = parseInt(nowStr, 10);
@@ -70,7 +75,7 @@ class MockRedisClient {
 }
 
 class MockRedisService {
-  private client = new MockRedisClient();
+  public client = new MockRedisClient();
   getClient() {
     return this.client;
   }
@@ -98,12 +103,31 @@ class MockClientService {
     },
   ];
 
+  private configCache = new Map<string, any>();
+  public shouldThrow = false;
+
   async findById(id: string) {
-    return this.clients.find((c) => c.id === id) || null;
+    if (this.shouldThrow) {
+      const cached = this.configCache.get(id);
+      if (cached) return cached;
+      throw new Error('Postgres connection lost');
+    }
+    const client = this.clients.find((c) => c.id === id) || null;
+    if (client) {
+      this.configCache.set(id, client);
+    }
+    return client;
   }
 
   async findAll() {
-    return this.clients;
+    if (this.shouldThrow) {
+      return Array.from(this.configCache.values());
+    }
+    const clients = this.clients;
+    for (const client of clients) {
+      this.configCache.set(client.id, client);
+    }
+    return clients;
   }
 }
 
@@ -116,6 +140,7 @@ class MockQueue {
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
   let redisService: MockRedisService;
+  let clientService: MockClientService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -138,6 +163,7 @@ describe('RateLimiterService', () => {
 
     service = module.get<RateLimiterService>(RateLimiterService);
     redisService = module.get<RedisService>(RedisService) as any;
+    clientService = module.get<ClientService>(ClientService) as any;
 
     // Trigger onModuleInit to mimic NestJS lifecycle command registration
     service.onModuleInit();
@@ -187,5 +213,43 @@ describe('RateLimiterService', () => {
     const result = await service.checkRateLimit('payment-service');
     expect(result.allowed).toBe(true);
     expect(result.remainingTokens).toBeGreaterThanOrEqual(1);
+  });
+
+  describe('Fail-safe Outage Fallbacks', () => {
+    it('should fall back to local in-memory configuration cache if PostgreSQL database fails', async () => {
+      // Warm cache by loading the configuration once successfully
+      const firstCheck = await service.checkRateLimit('payment-service');
+      expect(firstCheck.allowed).toBe(true);
+
+      // Simulate database outage
+      clientService.shouldThrow = true;
+
+      // Rate limit check should still succeed, fetching config from cache
+      const secondCheck = await service.checkRateLimit('payment-service');
+      expect(secondCheck.allowed).toBe(true);
+      expect(secondCheck.remainingTokens).toBe(98);
+    });
+
+    it('should fall back to local in-memory token bucket calculations if Redis cache fails', async () => {
+      // Warm configuration cache (so PostgreSQL doesn't fail, but Redis will)
+      await service.checkRateLimit('payment-service');
+
+      // Simulate Redis cache outage
+      redisService.client.shouldThrow = true;
+
+      // Run multiple check requests; they should fall back to local bucket state calculations and decrement correctly
+      const r1 = await service.checkRateLimit('payment-service');
+      expect(r1.allowed).toBe(true);
+      // Wait, since we warmed it up, it had 99 tokens. The local fallback bucket is initialized at capacity (100) and decrements to 99:
+      expect(r1.remainingTokens).toBe(99);
+
+      const r2 = await service.checkRateLimit('payment-service');
+      expect(r2.allowed).toBe(true);
+      expect(r2.remainingTokens).toBe(98);
+
+      const r3 = await service.checkRateLimit('payment-service');
+      expect(r3.allowed).toBe(true);
+      expect(r3.remainingTokens).toBe(97);
+    });
   });
 });

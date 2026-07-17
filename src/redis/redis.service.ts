@@ -12,7 +12,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.client = new Redis({
       host,
       port,
-      maxRetriesPerRequest: null, // needed for BullMQ compatibility in future phases
+      maxRetriesPerRequest: 3, // fail fast if commands cannot execute
+      enableOfflineQueue: false, // throw immediate error instead of buffering commands when disconnected
+      connectTimeout: 2000, // fail connection attempt after 2 seconds
     });
   }
 
