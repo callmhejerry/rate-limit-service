@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bullmq';
 import { RateLimiterService } from './rate-limiter.service';
 import { RedisService } from '../redis/redis.service';
 import { ClientService } from '../client/client.service';
@@ -106,6 +107,12 @@ class MockClientService {
   }
 }
 
+class MockQueue {
+  async add(name: string, data: any) {
+    return { id: 'mock-job-id', data };
+  }
+}
+
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
   let redisService: MockRedisService;
@@ -121,6 +128,10 @@ describe('RateLimiterService', () => {
         {
           provide: ClientService,
           useClass: MockClientService,
+        },
+        {
+          provide: getQueueToken('request-logs'),
+          useClass: MockQueue,
         },
       ],
     }).compile();

@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { RedisService } from '../redis/redis.service';
 import { ClientService } from '../client/client.service';
 import { CheckResult } from './interfaces/rate-limit.interface';
@@ -8,6 +10,8 @@ export class RateLimiterService implements OnModuleInit {
   constructor(
     private readonly redisService: RedisService,
     private readonly clientService: ClientService,
+    @InjectQueue('request-logs')
+    private readonly logQueue: Queue,
   ) {}
 
   onModuleInit() {
@@ -60,9 +64,11 @@ export class RateLimiterService implements OnModuleInit {
   }
 
   /**
-   * Checks if a client is rate-limited using Redis and configurations from PostgreSQL.
+   * Checks if a client is rate-limited using Redis, and queues a request log asynchronously.
    */
   async checkRateLimit(clientId: string): Promise<CheckResult> {
+    const start = Date.now();
+
     const client = await this.clientService.findById(clientId);
 
     if (!client) {
@@ -70,6 +76,13 @@ export class RateLimiterService implements OnModuleInit {
     }
 
     if (!client.enabled) {
+      const duration = Date.now() - start;
+      await this.logQueue.add('log', {
+        clientId,
+        allowed: true,
+        responseTime: duration,
+        timestamp: new Date().toISOString(),
+      });
       return { allowed: true, remainingTokens: client.capacity };
     }
 
@@ -87,8 +100,22 @@ export class RateLimiterService implements OnModuleInit {
       '1', // request 1 token at a time
     )) as [number, number];
 
+    const allowed = allowedVal === 1;
+    const duration = Date.now() - start;
+
+    // Queue the log job asynchronously to BullMQ (unawaited)
+    this.logQueue.add('log', {
+      clientId,
+      allowed,
+      responseTime: duration,
+      timestamp: new Date().toISOString(),
+    }).catch(err => {
+      // Silently log or handle queue push errors to ensure availability
+      console.error('Failed to queue request log:', err);
+    });
+
     return {
-      allowed: allowedVal === 1,
+      allowed,
       remainingTokens: Math.floor(remainingTokensVal),
     };
   }
