@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { RateLimiterModule } from './rate-limiter/rate-limiter.module';
 import { ClientModule } from './client/client.module';
 import { LoggingModule } from './logging/logging.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { ClientEntity } from './client/entities/client.entity';
 import { RequestLogEntity } from './logging/entities/request-log.entity';
 
@@ -30,6 +31,7 @@ import { RequestLogEntity } from './logging/entities/request-log.entity';
     ClientModule,
     RateLimiterModule,
     LoggingModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
