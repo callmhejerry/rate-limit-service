@@ -1,9 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Client, BucketState, CheckResult } from './interfaces/rate-limit.interface';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { RedisService } from '../redis/redis.service';
+import { Client, CheckResult } from './interfaces/rate-limit.interface';
 
 @Injectable()
-export class RateLimiterService {
-  // In-memory client storage for Phase 1 (folded policy config)
+export class RateLimiterService implements OnModuleInit {
+  constructor(private readonly redisService: RedisService) {}
+
+  // In-memory client storage (folded policy config)
   private readonly clients: Client[] = [
     {
       id: 'payment-service',
@@ -25,13 +28,59 @@ export class RateLimiterService {
     },
   ];
 
-  // In-memory bucket states map (key: clientId)
-  private readonly states = new Map<string, BucketState>();
+  onModuleInit() {
+    // Define custom Redis command using Lua script for atomic Token Bucket evaluation
+    this.redisService.getClient().defineCommand('checkTokenBucket', {
+      numberOfKeys: 1,
+      lua: `
+        local key = KEYS[1]
+        local capacity = tonumber(ARGV[1])
+        local refill_rate = tonumber(ARGV[2])
+        local now = tonumber(ARGV[3])
+        local requested = tonumber(ARGV[4])
+
+        -- Read current state
+        local state = redis.call('HMGET', key, 'tokens', 'last_refill')
+        local current_tokens = tonumber(state[1])
+        local last_refill = tonumber(state[2])
+
+        if not current_tokens then
+          -- First initialization of the bucket
+          current_tokens = capacity
+          last_refill = now
+        else
+          -- Calculate refilled tokens based on time elapsed
+          local elapsed = (now - last_refill) / 1000
+          if elapsed > 0 then
+            local tokens_to_add = elapsed * refill_rate
+            current_tokens = math.min(capacity, current_tokens + tokens_to_add)
+            last_refill = now
+          end
+        end
+
+        -- Check if request is allowed
+        local allowed = 0
+        if current_tokens >= requested then
+          current_tokens = current_tokens - requested
+          allowed = 1
+        end
+
+        -- Update state in Redis
+        redis.call('HMSET', key, 'tokens', current_tokens, 'last_refill', last_refill)
+        
+        -- Set TTL to clean up inactive buckets (capacity refill time + 1 hour buffer)
+        local ttl = math.ceil(capacity / refill_rate) + 3600
+        redis.call('EXPIRE', key, ttl)
+
+        return {allowed, current_tokens}
+      `,
+    });
+  }
 
   /**
-   * Checks if a client is rate-limited.
+   * Checks if a client is rate-limited using Redis.
    */
-  checkRateLimit(clientId: string): CheckResult {
+  async checkRateLimit(clientId: string): Promise<CheckResult> {
     const client = this.clients.find((c) => c.id === clientId);
 
     if (!client) {
@@ -42,47 +91,33 @@ export class RateLimiterService {
       return { allowed: true, remainingTokens: client.capacity };
     }
 
-    const key = clientId;
+    const key = `rate_limit:${clientId}`;
     const now = Date.now();
-    let state = this.states.get(key);
 
-    if (!state) {
-      // First request initialize the bucket to capacity
-      state = {
-        currentTokens: client.capacity,
-        lastRefill: now,
-      };
-    } else {
-      // Calculate token replenishment based on time elapsed
-      const elapsedSeconds = (now - state.lastRefill) / 1000;
-      const tokensToAdd = elapsedSeconds * client.refillRatePerSecond;
-      state.currentTokens = Math.min(
-        client.capacity,
-        state.currentTokens + tokensToAdd,
-      );
-      state.lastRefill = now;
-    }
+    // Execute the atomic Lua script in Redis
+    const [allowedVal, remainingTokensVal] = (await (
+      this.redisService.getClient() as any
+    ).checkTokenBucket(
+      key,
+      client.capacity.toString(),
+      client.refillRatePerSecond.toString(),
+      now.toString(),
+      '1', // request 1 token at a time
+    )) as [number, number];
 
-    if (state.currentTokens >= 1) {
-      state.currentTokens -= 1;
-      this.states.set(key, state);
-      return {
-        allowed: true,
-        remainingTokens: Math.floor(state.currentTokens),
-      };
-    } else {
-      this.states.set(key, state);
-      return {
-        allowed: false,
-        remainingTokens: Math.floor(state.currentTokens),
-      };
-    }
+    return {
+      allowed: allowedVal === 1,
+      remainingTokens: Math.floor(remainingTokensVal),
+    };
   }
 
   /**
-   * Helper to reset bucket states (useful for testing)
+   * Helper to reset Redis states for the mock clients (useful for testing)
    */
-  resetStates(): void {
-    this.states.clear();
+  async resetStates(): Promise<void> {
+    const keys = this.clients.map((c) => `rate_limit:${c.id}`);
+    if (keys.length > 0) {
+      await this.redisService.getClient().del(...keys);
+    }
   }
 }

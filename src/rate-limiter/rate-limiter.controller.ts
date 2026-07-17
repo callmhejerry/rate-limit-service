@@ -9,7 +9,7 @@ export class RateLimiterController {
 
   @Post('check')
   @HttpCode(HttpStatus.OK)
-  check(@Body() dto: CheckRateLimitDto): CheckResult {
+  async check(@Body() dto: CheckRateLimitDto): Promise<CheckResult> {
     return this.rateLimiterService.checkRateLimit(dto.clientId);
   }
 }
