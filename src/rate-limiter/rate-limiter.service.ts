@@ -1,32 +1,14 @@
 import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { RedisService } from '../redis/redis.service';
-import { Client, CheckResult } from './interfaces/rate-limit.interface';
+import { ClientService } from '../client/client.service';
+import { CheckResult } from './interfaces/rate-limit.interface';
 
 @Injectable()
 export class RateLimiterService implements OnModuleInit {
-  constructor(private readonly redisService: RedisService) {}
-
-  // In-memory client storage (folded policy config)
-  private readonly clients: Client[] = [
-    {
-      id: 'payment-service',
-      name: 'Payment Service',
-      apiKey: 'payment-secret-key',
-      capacity: 100,
-      refillRatePerSecond: 1.67,
-      algorithm: 'TOKEN_BUCKET',
-      enabled: true,
-    },
-    {
-      id: 'wallet-service',
-      name: 'Wallet Service',
-      apiKey: 'wallet-secret-key',
-      capacity: 5000,
-      refillRatePerSecond: 83.33,
-      algorithm: 'TOKEN_BUCKET',
-      enabled: true,
-    },
-  ];
+  constructor(
+    private readonly redisService: RedisService,
+    private readonly clientService: ClientService,
+  ) {}
 
   onModuleInit() {
     // Define custom Redis command using Lua script for atomic Token Bucket evaluation
@@ -78,10 +60,10 @@ export class RateLimiterService implements OnModuleInit {
   }
 
   /**
-   * Checks if a client is rate-limited using Redis.
+   * Checks if a client is rate-limited using Redis and configurations from PostgreSQL.
    */
   async checkRateLimit(clientId: string): Promise<CheckResult> {
-    const client = this.clients.find((c) => c.id === clientId);
+    const client = await this.clientService.findById(clientId);
 
     if (!client) {
       throw new NotFoundException(`Client not found with ID '${clientId}'`);
@@ -112,10 +94,11 @@ export class RateLimiterService implements OnModuleInit {
   }
 
   /**
-   * Helper to reset Redis states for the mock clients (useful for testing)
+   * Helper to reset Redis states for active clients (useful for testing)
    */
   async resetStates(): Promise<void> {
-    const keys = this.clients.map((c) => `rate_limit:${c.id}`);
+    const clients = await this.clientService.findAll();
+    const keys = clients.map((c) => `rate_limit:${c.id}`);
     if (keys.length > 0) {
       await this.redisService.getClient().del(...keys);
     }

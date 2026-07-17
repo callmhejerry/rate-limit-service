@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { RateLimiterService } from './rate-limiter.service';
 import { RedisService } from '../redis/redis.service';
+import { ClientService } from '../client/client.service';
 import { NotFoundException } from '@nestjs/common';
 
 // Hermetic in-memory mock of Redis client and the custom Lua command
@@ -74,6 +75,37 @@ class MockRedisService {
   }
 }
 
+class MockClientService {
+  private clients = [
+    {
+      id: 'payment-service',
+      name: 'Payment Service',
+      apiKey: 'payment-secret-key',
+      capacity: 100,
+      refillRatePerSecond: 1.67,
+      algorithm: 'TOKEN_BUCKET',
+      enabled: true,
+    },
+    {
+      id: 'wallet-service',
+      name: 'Wallet Service',
+      apiKey: 'wallet-secret-key',
+      capacity: 5000,
+      refillRatePerSecond: 83.33,
+      algorithm: 'TOKEN_BUCKET',
+      enabled: true,
+    },
+  ];
+
+  async findById(id: string) {
+    return this.clients.find((c) => c.id === id) || null;
+  }
+
+  async findAll() {
+    return this.clients;
+  }
+}
+
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
   let redisService: MockRedisService;
@@ -86,12 +118,16 @@ describe('RateLimiterService', () => {
           provide: RedisService,
           useClass: MockRedisService,
         },
+        {
+          provide: ClientService,
+          useClass: MockClientService,
+        },
       ],
     }).compile();
 
     service = module.get<RateLimiterService>(RateLimiterService);
     redisService = module.get<RedisService>(RedisService) as any;
-    
+
     // Trigger onModuleInit to mimic NestJS lifecycle command registration
     service.onModuleInit();
   });
