@@ -7,28 +7,39 @@ import { CreateClientDto } from './dtos/create-client.dto';
 @Injectable()
 export class ClientService {
   private readonly logger = new Logger(ClientService.name);
-  // In-memory cache of client configurations for database fail-safety
   private readonly configCache = new Map<string, ClientEntity>();
 
   constructor(
     @InjectRepository(ClientEntity)
     private readonly clientRepository: Repository<ClientEntity>,
-  ) {}
+  ) { }
 
   /**
    * Creates or updates a client configuration in the database and caches it.
    */
   async createOrUpdate(dto: CreateClientDto): Promise<ClientEntity> {
+    let capacity = dto.capacity ?? 100;
+    let refillRatePerSecond = dto.refillRatePerSecond ?? 1.67;
+    let requestsPerMinute = dto.requestsPerMinute ?? capacity;
+
+    if (dto.requestsPerMinute !== undefined) {
+      capacity = dto.requestsPerMinute;
+      refillRatePerSecond = dto.requestsPerMinute / 60.0;
+    }
+
     const client = this.clientRepository.create({
       id: dto.id,
       name: dto.name,
       apiKey: dto.apiKey,
-      capacity: dto.capacity,
-      refillRatePerSecond: dto.refillRatePerSecond,
+      capacity,
+      refillRatePerSecond,
+      requestsPerMinute,
       algorithm: dto.algorithm ?? 'TOKEN_BUCKET',
       enabled: dto.enabled ?? true,
     });
     const saved = await this.clientRepository.save(client);
+
+    // cache the saved client internally , we will need this in the feature if database fails
     this.configCache.set(saved.id, saved);
     return saved;
   }

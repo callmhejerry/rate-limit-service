@@ -1,8 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { RateLimiterModule } from './rate-limiter/rate-limiter.module';
 import { ClientModule } from './client/client.module';
 import { LoggingModule } from './logging/logging.module';
@@ -33,7 +31,5 @@ import { RequestLogEntity } from './logging/entities/request-log.entity';
     LoggingModule,
     AnalyticsModule,
   ],
-  controllers: [AppController],
-  providers: [AppService],
 })
-export class AppModule {}
+export class AppModule { }

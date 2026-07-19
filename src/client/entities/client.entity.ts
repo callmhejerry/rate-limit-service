@@ -17,6 +17,10 @@ export class ClientEntity {
   @Column('float', { name: 'refill_rate_per_second' })
   refillRatePerSecond: number;
 
+  @Column('float', { name: 'requests_per_minute', nullable: true })
+  requestsPerMinute: number;
+
+  // we will need this in the feature if we want to implement another rate limiting algorithm and use different algorithm for different client service
   @Column()
   algorithm: string;
 

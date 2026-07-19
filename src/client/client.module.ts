@@ -4,10 +4,11 @@ import { ClientEntity } from './entities/client.entity';
 import { ClientService } from './client.service';
 import { ClientController } from './client.controller';
 
+// this module contains the functionality to add , update , delete and get clients from the database.
 @Module({
   imports: [TypeOrmModule.forFeature([ClientEntity])],
   controllers: [ClientController],
   providers: [ClientService],
   exports: [ClientService],
 })
-export class ClientModule {}
+export class ClientModule { }
