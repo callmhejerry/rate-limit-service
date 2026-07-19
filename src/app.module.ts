@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
-import { RateLimiterModule } from './rate-limiter/rate-limiter.module';
-import { ClientModule } from './client/client.module';
-import { LoggingModule } from './logging/logging.module';
-import { AnalyticsModule } from './analytics/analytics.module';
-import { ClientEntity } from './client/entities/client.entity';
-import { RequestLogEntity } from './logging/entities/request-log.entity';
+import { RateLimiterModule } from './modules/rate-limiter/rate-limiter.module';
+import { ClientModule } from './modules/client/client.module';
+import { LoggingModule } from './modules/logging/logging.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { ClientEntity } from './modules/client/entities/client.entity';
+import { RequestLogEntity } from './modules/logging/entities/request-log.entity';
 
 @Module({
   imports: [

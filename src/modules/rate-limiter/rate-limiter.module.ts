@@ -17,4 +17,4 @@ import { ClientModule } from '../client/client.module';
   providers: [RateLimiterService],
   exports: [RateLimiterService],
 })
-export class RateLimiterModule {}
+export class RateLimiterModule { }

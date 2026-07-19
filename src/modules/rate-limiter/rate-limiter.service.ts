@@ -16,7 +16,7 @@ export class RateLimiterService implements OnModuleInit {
     private readonly clientService: ClientService,
     @InjectQueue('request-logs')
     private readonly logQueue: Queue,
-  ) {}
+  ) { }
 
   onModuleInit() {
     try {
